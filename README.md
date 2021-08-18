@@ -91,12 +91,101 @@ De nuevo crea otro subdominio para publicar una tienda online. Esta vez usa la d
 https://devdocs.prestashop.com/1.7/basics/installation/
 
 > Pregunta 6 : Documenta todo el proceso.
+
+Instalamos composer:
 ```
 	wget https://getcomposer.org/download/1.10.17/composer.phar -O /usr/bin/composer
 	chmod +x /usr/bin/composer
 ```
+
+Seguimos los pasos de esta guía oficial:
+https://devdocs.prestashop.com/1.7/basics/installation/localhost/
+
 > Pregunta 7 : Como podemos separar los pools de fpm? Crea 3 pools independientes, cada uno para su aplicativo con un socket independiente. Usaremos los 3 anteriores.
 
+En el directorio */etc/php/7.3/fpm/pool.d/* podemos crear tantas pools como deseemos simplemente cambiando el nombre de archivo, de la pool y del socket. Para prestashop hemos creado un pool llamado www-ps (ver fichero www-ps.conf) con estos valores:
+```
+[www-ps]
+listen = /run/php/php7.3-fpm-ps.sock
+```
+
+Y para wordpress hemos creado este (ver fichero www-wp.conf):
+```
+[www-wp]
+listen = /run/php/php7.3-fpm-wp.sock
+```
+
+Reniciamos el servicio php y vemos cómo tenemos disponibles los diferentes pools creados:
+
+![image](https://user-images.githubusercontent.com/65896169/129960726-5d8e456d-545c-4b1a-b40a-82fff60b962a.png)
 
 > Pregunta 8 : Configura tanto nginx como php para que publiquen sus estadisticas, y que solo sean accesibles desde 127.0.0.1 . En concreto de nginx queremos el stub_status y de fpm el pm.status.
 
+Para publicar las estadísticas de nginx, solamente hay incluir la siguiente location en el server por defecto de nginx (en */etc/nginx/sites-enabled/default*):
+```
+
+        location /nginx_status {
+                stub_status;
+                allow 127.0.0.1;        #only allow requests from localhost
+                deny all;               #deny all other hosts
+        }
+```
+
+Reininciamos el servicio y ya podemos acceder desde localhost:
+```
+# service nginx restart
+# curl localhost/nginx_status
+Active connections: 1
+server accepts handled requests
+ 1 1 1
+Reading: 0 Writing: 1 Waiting: 0
+```
+
+Y para php podemos crear un pool nuevo que habilite las estadísticas (*/etc/php/7.3/fpm/pools.d/stats.conf*), aunque lo lógico sería habilitar en cada pool que tenemos, ya que solo nos ofrece la estadisticas del pool en cuestión:
+```
+[stats]
+user = www-data
+group = www-data
+listen = /run/php/php7.3-fpm-stats.sock
+
+listen.owner = www-data
+listen.group = www-data
+
+pm = dynamic
+pm.max_children = 1
+pm.start_servers = 1
+pm.min_spare_servers = 1
+pm.max_spare_servers = 1
+
+pm.status_path = /status
+```
+Y en el sitio por defecto de nginx añadimos esta location:
+```
+        location ~ ^/(status|ping)$ {
+                allow 127.0.0.1;
+                fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+                fastcgi_index index.php;
+                include fastcgi_params;
+                fastcgi_pass   unix:/run/php/php7.3-fpm-stats.sock;
+        }
+```
+
+Reinciamos los servicios de nginx y php-fpm y ya podemos acceder a la información en localhost:
+
+```
+# curl localhost/status
+pool:                 stats
+process manager:      dynamic
+start time:           18/Aug/2021:21:59:15 +0200
+start since:          227
+accepted conn:        1
+listen queue:         0
+max listen queue:     0
+listen queue len:     0
+idle processes:       0
+active processes:     1
+total processes:      1
+max active processes: 1
+max children reached: 0
+slow requests:        0
+```
